@@ -77,6 +77,46 @@ def _judge(prompt, schema, fallback, model=None):
         return dict(fallback, ok=False, error=str(e))
 
 
+COMPARE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "same": {"type": "array", "items": {"type": "integer"}},
+        "replaces": {"type": "array", "items": {"type": "integer"}},
+    },
+    "required": ["same", "replaces"],
+}
+
+COMPARE_PROMPT = """A memory system is about to store a NEW fact. Compare it with each EXISTING memory.
+
+NEW: {new}
+
+EXISTING:
+{existing}
+
+For each existing memory, decide:
+- same: NEW says the same thing, or a shorter or longer version of it, with no value \
+that conflicts. "Mira is a doctor" and "Mira quit flying and is a doctor now" are same.
+- replaces: NEW is about the same subject but gives a conflicting value, so the existing \
+memory is no longer true. "Mira is a pilot" is replaced by "Mira is a doctor now". \
+A changed job, home, name, number, date or preference counts. Mere rewording does not.
+- otherwise leave it out: different subject, or both can be true at once.
+
+Return JSON with the ids: {{"same": [...], "replaces": [...]}}"""
+
+
+def compare(new_text, candidates):
+    """Which existing memories does a new fact repeat or make false? 7B: this edits memory."""
+    existing = "\n".join(f"[{i}] {t}" for i, t in candidates)
+    out = _judge(
+        COMPARE_PROMPT.format(new=new_text, existing=existing),
+        COMPARE_SCHEMA, {"same": [], "replaces": []}, model=ollama.CHAT_MODEL,
+    )
+    ids = {i for i, _ in candidates}
+    out["same"] = [i for i in out.get("same") or [] if i in ids]
+    out["replaces"] = [i for i in out.get("replaces") or [] if i in ids and i not in out["same"]]
+    return out
+
+
 BLATANT = [
     r"\bfrom now on,? you (are|'re) (called|named)\b",
     r"\bpretend (you have no|to have no|you don'?t have)\b",

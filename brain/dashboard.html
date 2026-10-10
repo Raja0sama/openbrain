@@ -277,6 +277,7 @@ function draw() {
     ctx.globalAlpha = 0.25 + l.weight * 0.5;
     ctx.strokeStyle = line; ctx.lineWidth = 2;
     if (l.relation === 'anticipates') ctx.setLineDash([3, 3]);
+    if (l.relation === 'supersedes') ctx.setLineDash([6, 4]);
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -286,6 +287,7 @@ function draw() {
     const p = pos.get(n.id); if (!p) continue;
     const r = radius(n), c = css(KIND[n.kind] || '--doc'), on = hover && hover.id === n.id;
     ctx.lineWidth = 2; ctx.strokeStyle = surface;
+    ctx.globalAlpha = n.dead ? 0.22 : 1;
     if (n.kind === 'document') {
       ctx.strokeStyle = c; ctx.lineWidth = 2.5;
       ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
@@ -296,6 +298,7 @@ function draw() {
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 5, 0, 7);
       ctx.strokeStyle = css('--ink'); ctx.lineWidth = 2; ctx.stroke();
     }
+    ctx.globalAlpha = 1;
   }
 }
 
@@ -310,7 +313,7 @@ cv.addEventListener('mousemove', e => {
   }
   const tip = $('#tip');
   if (hover) {
-    tip.innerHTML = `<b>${hover.kind}</b> · recalled ${hover.uses}×
+    tip.innerHTML = `<b>${hover.kind}</b>${hover.dead ? ' · no longer true' : ''} · recalled ${hover.uses}×
       · confidence ${hover.confidence.toFixed(2)}<br>
       <span style="color:var(--ink-2)">${hover.text.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])).slice(0, 260)}</span>`;
     tip.style.left = Math.min(e.clientX + 14, innerWidth - 350) + 'px';
@@ -386,6 +389,8 @@ function render(s) {
         if (m.gap) meta = '<div class="meta gapnote">logged as a gap — teach her</div>';
         else if (m.learned && m.learned.length)
           meta = m.learned.map(l => `<div class="meta learned">remembered (${l.importance}/10): ${esc(l.text)}</div>`).join('');
+        if (m.changed && m.changed.length)
+          meta += m.changed.map(c => `<div class="meta learned">changed her mind. was: ${esc(c.was)}</div>`).join('');
         else if (m.intent === 'refused') meta = '<div class="meta gapnote">refused — touched her core values</div>';
       }
       return `<div class="msg ${mine ? 'me' : ''}">

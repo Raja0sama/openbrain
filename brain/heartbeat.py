@@ -29,6 +29,7 @@ def wander(db):
     rows = list(
         db.execute(
             "SELECT id, text FROM memory WHERE kind IN ('fact','document')"
+            " AND invalid_at IS NULL"
             " AND COALESCE(source, '') NOT IN ('conversation', 'self-resolved')"
             " ORDER BY use_count ASC, RANDOM() LIMIT 5"
         )

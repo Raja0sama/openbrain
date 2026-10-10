@@ -1,4 +1,5 @@
 import sys
+import time
 
 from . import dashboard, decide, graph, heartbeat, identity, memory, ollama, reflect, store, teacher
 
@@ -25,6 +26,7 @@ RECALL_RULE = (
 
 
 def answer(db, question, k=5, learn=True, history=None):
+    started = time.time()
     call = decide.route(question)
     core = identity.load_core()
     user = core["serves"]
@@ -76,7 +78,10 @@ def answer(db, question, k=5, learn=True, history=None):
         # a stated preference is the most valuable memory she can hold.
         if verdict["worth_remembering"] or verdict["about_user"]:
             floor = 1 if verdict["about_user"] else verdict["importance"]
-            kept = reflect.write_back(db, question, reply, floor=floor)
+            # Her own answers are restatements of memory, never corrections to it.
+            kept = reflect.write_back(db, question, reply, floor=floor, correct=False)
+
+    call["changed"] = [(c["old_text"], c["new_text"]) for c in store.changes(db, since=started)]
 
     # Not knowing is an experience too, so introspection runs on both paths.
     felt = decide.introspect(question, reply)
@@ -96,6 +101,8 @@ def _print(reply, call, kept):
         print("  (gap logged -- run `brain gaps`)")
     for _, text, imp in kept:
         print(f"  (learned, {imp}/10) {text}")
+    for old, new in call.get("changed", []):
+        print(f"  (changed her mind) was: {old}")
 
 
 def _show(db, question, history=None):
@@ -134,7 +141,8 @@ def main():
 
     elif cmd == "consolidate":
         merged = 0
-        rows = list(db.execute("SELECT id, kind, vec FROM memory ORDER BY id"))
+        rows = list(db.execute(
+            "SELECT id, kind, vec FROM memory WHERE invalid_at IS NULL ORDER BY id"))
         keep = []
         for r in rows:
             v = store.unpack(r["vec"])
@@ -158,7 +166,8 @@ def main():
         graph.init(db)
         db.execute("DELETE FROM link WHERE relation = 'similar'")
         db.commit()
-        for r in db.execute("SELECT id, vec FROM memory WHERE vec IS NOT NULL"):
+        for r in db.execute(
+                "SELECT id, vec FROM memory WHERE vec IS NOT NULL AND invalid_at IS NULL"):
             memory.auto_link(db, r["id"], store.unpack(r["vec"]))
         edges, avg = graph.stats(db)
         print(f"{edges} links, average weight {avg:.2f}")
@@ -166,7 +175,8 @@ def main():
     elif cmd == "graph":
         edges, avg = graph.stats(db)
         print(f"{store.count(db)} memories, {edges} links, average weight {avg:.2f}")
-        for r in db.execute("SELECT id, substr(text,1,45) t FROM memory ORDER BY id"):
+        for r in db.execute(
+                "SELECT id, substr(text,1,45) t FROM memory WHERE invalid_at IS NULL ORDER BY id"):
             links = graph.neighbours(db, r["id"])
             near = ", ".join(f"{d}({w:.2f})" for d, w in sorted(links, key=lambda x: -x[1])[:4])
             print(f"  [{r['id']}] {r['t']}")
@@ -246,6 +256,16 @@ def main():
             outcome, _ = teacher.learn_gap(db, g)
             print(f"  [{g['id']}] {g['question'][:72]}\n       -> {outcome}")
 
+    elif cmd == "changes":
+        import datetime
+        rows = store.changes(db, n=30)
+        if not rows:
+            print("she has not changed her mind about anything yet")
+        for r in rows:
+            when = datetime.datetime.fromtimestamp(r["at"]).strftime("%b %d %H:%M")
+            print(f"  {when}  was: {r['old_text'][:70]}")
+            print(f"              now: {(r['new_text'] or '(forgotten)')[:70]}")
+
     elif cmd == "lessons":
         rows = store.recent_lessons(db)
         if not rows:
@@ -271,7 +291,7 @@ def main():
                 del history[:-WORKING_MEMORY * 2]
 
     else:
-        print("usage: brain [init | feed <file> | ask <q> | repl | self | live [n]\n              | bench | dash [--think]\n              | graph | relink | consolidate | gaps | teach <id> <text>\n              | learn [id] | lessons]")
+        print("usage: brain [init | feed <file> | ask <q> | repl | self | live [n]\n              | bench | dash [--think]\n              | graph | relink | consolidate | gaps | teach <id> <text>\n              | learn [id] | lessons | changes]")
 
 
 if __name__ == "__main__":

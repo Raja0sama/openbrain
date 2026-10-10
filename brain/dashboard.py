@@ -20,7 +20,7 @@ def snapshot(db):
     rows = list(
         db.execute(
             "SELECT id, kind, text, source, use_count, importance, confidence,"
-            " created_at FROM memory ORDER BY id"
+            " created_at, invalid_at FROM memory ORDER BY id"
         )
     )
     nodes = [
@@ -32,6 +32,7 @@ def snapshot(db):
             "uses": r["use_count"],
             "importance": r["importance"],
             "confidence": r["confidence"],
+            "dead": r["invalid_at"] is not None,
         }
         for r in rows
     ]
@@ -130,6 +131,7 @@ class Handler(BaseHTTPRequestHandler):
             "role": "assistant", "text": reply, "at": time.time(),
             "intent": "refused" if call.get("touches_core") else call.get("intent", ""),
             "learned": [{"text": t, "importance": i} for _, t, i in kept],
+            "changed": [{"was": o, "now": n} for o, n in call.get("changed", [])],
             "gap": cli.IDK.lower() in reply.lower(),
         })
         self._send(json.dumps({"ok": True}).encode(), "application/json")

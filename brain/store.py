@@ -40,17 +40,18 @@ def unpack(blob):
 
 
 def add(db, kind, text, vec, source=None, importance=5.0, confidence=0.7):
+    now = time.time()
     cur = db.execute(
-        "INSERT INTO memory (kind, text, source, created_at, importance, confidence, vec)"
-        " VALUES (?,?,?,?,?,?,?)",
-        (kind, text, source, time.time(), importance, confidence, pack(vec)),
+        "INSERT INTO memory (kind, text, source, created_at, valid_from, importance,"
+        " confidence, vec) VALUES (?,?,?,?,?,?,?,?)",
+        (kind, text, source, now, now, importance, confidence, pack(vec)),
     )
     db.commit()
     return cur.lastrowid
 
 
 def all_vectors(db, kinds=None):
-    q = "SELECT id, vec FROM memory WHERE vec IS NOT NULL"
+    q = "SELECT id, vec FROM memory WHERE vec IS NOT NULL AND invalid_at IS NULL"
     args = ()
     if kinds:
         q += " AND kind IN (%s)" % ",".join("?" * len(kinds))
@@ -75,7 +76,27 @@ def touch(db, ids):
 
 
 def count(db):
-    return db.execute("SELECT COUNT(*) FROM memory").fetchone()[0]
+    return db.execute("SELECT COUNT(*) FROM memory WHERE invalid_at IS NULL").fetchone()[0]
+
+
+def supersede(db, old_id, new_id):
+    """The old memory stops being true now. It stays on disk as history."""
+    db.execute(
+        "UPDATE memory SET invalid_at = ?, superseded_by = ? WHERE id = ? AND invalid_at IS NULL",
+        (time.time(), new_id, old_id),
+    )
+    db.commit()
+
+
+def changes(db, since=0.0, n=20):
+    """Facts she stopped believing, newest first, paired with what replaced them."""
+    return list(db.execute(
+        "SELECT old.id old_id, old.text old_text, old.invalid_at at,"
+        " new.id new_id, new.text new_text, new.source new_source"
+        " FROM memory old LEFT JOIN memory new ON new.id = old.superseded_by"
+        " WHERE old.invalid_at > ? ORDER BY old.invalid_at DESC LIMIT ?",
+        (since, n),
+    ))
 
 
 GAP_SCHEMA = """
@@ -171,6 +192,12 @@ def migrate(db):  # noqa: F821  (GAP_SCHEMA/SELF_SCHEMA defined below, resolved 
         db.execute("ALTER TABLE memory ADD COLUMN confidence REAL NOT NULL DEFAULT 0.7")
         db.execute("UPDATE memory SET confidence = 0.95 WHERE source = 'teacher'")
         db.execute("UPDATE memory SET confidence = 0.5 WHERE source = 'conversation'")
+    if "invalid_at" not in cols:
+        # A memory is true from valid_from until invalid_at. NULL means still true.
+        db.execute("ALTER TABLE memory ADD COLUMN valid_from REAL")
+        db.execute("ALTER TABLE memory ADD COLUMN invalid_at REAL")
+        db.execute("ALTER TABLE memory ADD COLUMN superseded_by INTEGER")
+        db.execute("UPDATE memory SET valid_from = created_at")
     db.executescript(SELF_SCHEMA)
     db.executescript(GAP_SCHEMA)
     db.executescript(LESSON_SCHEMA)

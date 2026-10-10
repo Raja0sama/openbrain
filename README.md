@@ -49,7 +49,7 @@ Or skip the dashboard: `.venv/bin/brain repl`.
 
 | Piece | What it does |
 |---|---|
-| `memory.py` | Chunk, embed, store. Recall by cosine, then spreading activation over the graph: jump to the right neighbourhood, walk two hops. |
+| `memory.py` | Chunk, embed, store. Recall by cosine, then spreading activation over the graph: jump to the right neighbourhood, walk two hops. New facts are checked against what she already holds: a correction supersedes the old fact instead of sitting next to it. |
 | `graph.py` | Links between memories. Fired together, wired together. |
 | `reflect.py` | After every exchange: what here is worth keeping forever? |
 | `decide.py` | Fast typed judgements on the 3B: intent, does this need memory, does it touch her core, is it about the user. |
@@ -86,6 +86,7 @@ brain gaps                 what she knows she doesn't know
 brain teach <id> "<text>"  close a gap yourself
 brain learn [id]           let the teacher close gaps
 brain lessons              every teacher call, logged
+brain changes              facts she stopped believing, and what replaced them
 brain self                 who she is right now
 brain bench                run the benchmark on a throwaway brain
 ```

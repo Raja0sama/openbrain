@@ -118,7 +118,7 @@ def inventory(db, top=6):
         r["text"]
         for r in db.execute(
             "SELECT text FROM memory WHERE kind IN ('fact','document')"
-            " ORDER BY importance DESC, use_count DESC LIMIT ?",
+            " AND invalid_at IS NULL ORDER BY importance DESC, use_count DESC LIMIT ?",
             (top,),
         )
     ]

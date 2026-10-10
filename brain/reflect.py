@@ -35,12 +35,13 @@ def extract(question, answer):
         return []
 
 
-def write_back(db, question, answer, source="conversation", floor=THRESHOLD):
+def write_back(db, question, answer, source="conversation", floor=THRESHOLD,
+               correct=True):
     memory.learn(db, f"Q: {question}\nA: {answer}", source=source, kind="episode")
     kept = []
     for fact in extract(question, answer):
         if fact.get("importance", 0) >= min(floor, THRESHOLD):
             ids = memory.learn(db, fact["text"], source=source, kind="fact",
-                               importance=float(fact["importance"]))
+                               importance=float(fact["importance"]), correct=correct)
             kept.append((ids[0], fact["text"], fact["importance"]))
     return kept
