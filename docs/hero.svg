@@ -581,5 +581,5 @@
 <circle cx="250" cy="290" r="19" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1.5"/>
 </g>
 <text x="72" y="552" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="54" font-weight="650" letter-spacing="-1.5" fill="#ffffff">openbrain</text>
-<text x="75" y="590" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="21" fill="#8b897f">A small brain that never grows, but becomes someone.</text>
+<text x="75" y="590" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="21" fill="#8b897f">A brain that grows by learning, not by getting bigger.</text>
 </svg>

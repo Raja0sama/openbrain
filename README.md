@@ -2,7 +2,7 @@
 
 # openbrain
 
-**A small brain that never grows, but becomes someone.**
+**A brain that grows by learning, not by getting bigger.**
 
 **What I'm trying to build:** a brain that grows the way a human's does. Not by making the model bigger, but by saving what it learns.
 
