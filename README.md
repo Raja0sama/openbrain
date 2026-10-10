@@ -4,7 +4,7 @@
 
 **A small brain that never grows, but becomes someone.**
 
-A local AI with a fixed 7B model and a memory that grows forever. It learns from every conversation, admits what it doesn't know, asks a teacher when it hits a gap, and forms a personality from what it lives through. Everything runs on your laptop. Nothing about you leaves it.
+A local AI with a small fixed model and a memory that grows forever. It learns from every conversation, admits what it doesn't know, asks a teacher when it's stuck, and forms a personality over time. Everything runs on your laptop, and nothing about you ever leaves it.
 
 ```
 > Where was Napoleon born?
