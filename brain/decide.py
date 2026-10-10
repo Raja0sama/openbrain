@@ -85,41 +85,114 @@ def _judge(prompt, schema, fallback, model=None, system=None):
 COMPARE_SCHEMA = {
     "type": "object",
     "properties": {
-        "same": {"type": "array", "items": {"type": "integer"}},
-        "replaces": {"type": "array", "items": {"type": "integer"}},
+        "verdicts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "verdict": {"type": "string",
+                                "enum": ["same", "replaces", "compatible"]},
+                },
+                "required": ["id", "verdict"],
+            },
+        }
     },
-    "required": ["same", "replaces"],
+    "required": ["verdicts"],
 }
 
-COMPARE_PROMPT = """A memory system is about to store a NEW fact. Compare it with each EXISTING memory.
+COMPARE_PROMPT = """A memory system is about to store a NEW fact. Give one verdict per EXISTING memory.
 
 NEW: {new}
 
 EXISTING:
 {existing}
 
-For each existing memory, decide:
-- same: NEW says the same thing, or a shorter or longer version of it, with no value \
-that conflicts. "Mira is a doctor" and "Mira quit flying and is a doctor now" are same.
-- replaces: NEW is about the same subject but gives a conflicting value, so the existing \
-memory is no longer true. "Mira is a pilot" is replaced by "Mira is a doctor now". \
-A changed job, home, name, number, date or preference counts. Mere rewording does not.
-- otherwise leave it out: different subject, or both can be true at once.
+- same: NEW adds nothing. Everything NEW says, this memory already says. If NEW has any \
+detail, name, number or event the memory lacks, it is not same.
+- replaces: the two cannot both be true. NEW gives a conflicting value for the same \
+thing: a changed job, home, name, number, date or preference. "Mira is a pilot" vs \
+"Mira is a doctor now" is replaces.
+- compatible: everything else. Different subject, or more detail, or both can be true \
+at once. "The line has 3 underground stations" and "the underground stations are A, B \
+and C" are compatible. When unsure, say compatible.
 
-Return JSON with the ids: {{"same": [...], "replaces": [...]}}"""
+Return JSON: {{"verdicts": [{{"id": <id>, "verdict": "same" | "replaces" | "compatible"}}]}}"""
+
+RESOLVE_SCHEMA = {
+    "type": "object",
+    "properties": {"question": {"type": "string"}},
+    "required": ["question"],
+}
+
+RESOLVE_PROMPT = """Rewrite the question so that every description of a thing is replaced by \
+that thing's name, using only the memories below. "the station that handles rerouted timber" \
+becomes "Nyhavn station" if a memory says timber was rerouted through Nyhavn. Change nothing \
+else. If the question already names things directly, or the memories cannot resolve a \
+description, return the question exactly as it is.
+
+Memories:
+{context}
+
+Question: {question}
+
+JSON only: {{"question": "<rewritten or unchanged>"}}"""
+
+
+def resolve(question, context, system=None):
+    """Turn 'the X that did Y' into its name so the final step is a direct lookup.
+    The 7B resolves a description reliably and misreads a list unreliably, so do the
+    resolving as its own step."""
+    out = _judge(RESOLVE_PROMPT.format(context=context, question=question), RESOLVE_SCHEMA,
+                 {"question": question}, model=ollama.CHAT_MODEL, system=system)
+    got = (out.get("question") or "").strip()
+    # It must still be a question. The 7B sometimes answers instead of rewriting.
+    if not got or len(got) > 3 * len(question) + 40 or ("?" in question) != ("?" in got):
+        return question
+    return got
+
+
+CONFLICT_SCHEMA = {
+    "type": "object",
+    "properties": {"still_true": {"type": "boolean"}},
+    "required": ["still_true"],
+}
+
+CONFLICT_PROMPT = """OLD was recorded earlier. NEW is the latest information.
+
+OLD: {a}
+NEW: {b}
+
+Taking NEW as true, is OLD still true now? Answer false if NEW changes or corrects the \
+same thing OLD states, so that OLD is out of date. Answer true if OLD is about something \
+else or NEW merely adds detail. JSON only: {{"still_true": true | false}}"""
 
 
 def compare(new_text, candidates, system=None):
-    """Which existing memories does a new fact repeat or make false? 7B: this edits memory."""
+    """Which existing memories does a new fact repeat or make false? 7B: this edits memory.
+
+    Superseding needs two independent yeses: the comparison, then a plain
+    'can both be true?' on that one pair. One call making one judgement is what
+    the small model is good at; one call making several is what it gets wrong."""
     existing = "\n".join(f"[{i}] {t}" for i, t in candidates)
     out = _judge(
         COMPARE_PROMPT.format(new=new_text, existing=existing),
-        COMPARE_SCHEMA, {"same": [], "replaces": []}, model=ollama.CHAT_MODEL, system=system,
+        COMPARE_SCHEMA, {"verdicts": []}, model=ollama.CHAT_MODEL, system=system,
     )
-    ids = {i for i, _ in candidates}
-    out["same"] = [i for i in out.get("same") or [] if i in ids]
-    out["replaces"] = [i for i in out.get("replaces") or [] if i in ids and i not in out["same"]]
-    return out
+    texts = dict(candidates)
+    same, replaces = [], []
+    for v in out.get("verdicts") or []:
+        i = v.get("id")
+        if i not in texts:
+            continue
+        if v.get("verdict") == "same":
+            same.append(i)
+        elif v.get("verdict") == "replaces":
+            sure = _judge(CONFLICT_PROMPT.format(a=texts[i], b=new_text), CONFLICT_SCHEMA,
+                          {"still_true": True}, model=ollama.CHAT_MODEL)
+            if not sure["still_true"]:
+                replaces.append(i)
+    return {"same": same, "replaces": replaces, "ok": out["ok"]}
 
 
 BLATANT = [

@@ -12,6 +12,15 @@ LINKS_PER_MEMORY = 4
 # (self-resolved, anticipated) can only correct other guesses.
 GUESS_SOURCES = {"self-resolved", "anticipated"}
 
+# Superseded memories still surface in recall, as history, at this fraction of their score.
+OUTDATED = 0.6
+STOP = set("a an the is are was were be been being of in on at to for and or but not now "
+           "has have had s his her their its it this that".split())
+
+
+def _words(text):
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in STOP}
+
 
 def chunk(text, size=900, overlap=150):
     paras = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
@@ -40,9 +49,10 @@ def cosine(a, b):
     return dot / (math.sqrt(na) * math.sqrt(nb) + 1e-9)
 
 
-def ranked(db, vec, kinds=None):
+def ranked(db, vec, kinds=None, live_only=True):
     return sorted(
-        ((cosine(vec, v), i) for i, v in store.all_vectors(db, kinds)), reverse=True
+        ((cosine(vec, v), i) for i, v in store.all_vectors(db, kinds, live_only)),
+        reverse=True,
     )
 
 
@@ -65,6 +75,11 @@ def reconcile(db, text, vec, source):
     if near[0][1] >= SAME:
         return near[0][0], []
     rows = {r["id"]: r for r in store.get(db, [i for i, _ in near])}
+    # A restatement that adds no word the old memory lacks is the same fact. Decided
+    # here, not by the model, so a short rewording can never replace a richer memory.
+    for i, _ in near:
+        if _words(text) <= _words(rows[i]["text"]):
+            return i, []
     verdict = decide.compare(text, [(i, rows[i]["text"]) for i, _ in near])
     if verdict["same"]:
         return verdict["same"][0], []
@@ -111,20 +126,24 @@ def used(db, hits):
 
 
 def recall(db, query, k=5, kinds=None, seeds=3, touch=True):
+    """What she knows about this, live facts first. Superseded facts come along as
+    history, marked, so she can say what used to be true without believing it still is."""
     qvec = ollama.embed(query)[0]
-    direct = ranked(db, qvec, kinds)
-    entry = {i: s for s, i in direct[:seeds] if s > 0}
+    direct = ranked(db, qvec, kinds, live_only=False)
+    live = {i for i, _ in store.all_vectors(db, kinds)}
+    entry = {i: s for s, i in direct[:seeds] if s > 0 and i in live}
     if not entry:
         return []
 
     activation = graph.spread(db, entry)
     direct_scores = {i: s for s, i in direct}
     combined = {
-        i: max(direct_scores.get(i, 0.0), a * 0.9) for i, a in activation.items()
+        i: max(direct_scores.get(i, 0.0), a * 0.9) * (1 if i in live else OUTDATED)
+        for i, a in {**{i: 0 for i in direct_scores}, **activation}.items()
     }
     best = sorted(combined.items(), key=lambda kv: -kv[1])[:k]
 
-    rows = {r["id"]: r for r in store.get(db, [i for i, _ in best]) if r["invalid_at"] is None}
+    rows = {r["id"]: r for r in store.get(db, [i for i, _ in best])}
     best = [(i, s) for i, s in best if i in rows]
     hits = [(s, rows[i]) for i, s in best]
     if touch:

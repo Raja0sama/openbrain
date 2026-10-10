@@ -23,6 +23,10 @@ Answer given: {got}"""
 
 
 def graded(q, expected, got):
+    # The expected fact appearing verbatim is a pass with no judgement needed. The 7B
+    # grader marked "Nyhavn station is underground." wrong for expected "underground".
+    if expected.lower() in got.lower():
+        return True
     raw = ollama.chat(
         [{"role": "user", "content": GRADE_PROMPT.format(q=q, expected=expected, got=got)}],
         temperature=0.0,

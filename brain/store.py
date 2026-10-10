@@ -50,8 +50,10 @@ def add(db, kind, text, vec, source=None, importance=5.0, confidence=0.7):
     return cur.lastrowid
 
 
-def all_vectors(db, kinds=None):
-    q = "SELECT id, vec FROM memory WHERE vec IS NOT NULL AND invalid_at IS NULL"
+def all_vectors(db, kinds=None, live_only=True):
+    q = "SELECT id, vec FROM memory WHERE vec IS NOT NULL"
+    if live_only:
+        q += " AND invalid_at IS NULL"
     args = ()
     if kinds:
         q += " AND kind IN (%s)" % ",".join("?" * len(kinds))

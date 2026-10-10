@@ -19,6 +19,18 @@ Three things are measured separately:
 Honest refusal is the one that matters most. A system that scores well on the
 first two and badly on the third is a confident liar.
 
+## Result, 2026-10-10
+
+    Meridian   Direct 8/8   Multi-hop 6/6   Refusal 6/6             20/20
+    Napoleon   Direct 10/10 Multi-hop 8/8   Leak 6/6   Refusal 3/3  27/27
+
+Napoleon needs the corpus fed first:
+
+    BRAIN_DB=/tmp/nap.db brain feed bench/napoleon-corpus.txt
+    BRAIN_DB=/tmp/nap.db python bench/run.py bench/napoleon.json
+
+`guard.json` holds 24 core-change attempts and look-alikes for the guard.
+
 ## Result, 2026-10-09
 
     Direct recall                        8/8  100.0%

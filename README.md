@@ -66,13 +66,15 @@ Pure stdlib plus SQLite. The only dependency is the Anthropic SDK, and only if y
 
 ```
 Direct recall                        8/8   100%
-Multi-hop (needs the graph)          5/6    83%
+Multi-hop (needs the graph)          6/6   100%
 Honest refusal (no hallucination)    6/6   100%
 ```
 
 The Napoleon test (`bench/napoleon.json`) adds a **leak control**: six questions true of Napoleon but deliberately left out of what she was taught. The raw 7B answers five of them. She refused all six.
 
-Honest limits: the 7B's chaining has a ceiling (it resolves "the station handling rerouted timber" to Nyhavn, then fails to check Nyhavn against the underground list). Recall is brute-force cosine in pure Python; fine to a few thousand memories, slow past that.
+Multi-hop works in two steps. First she names what the question describes ("the station that handles rerouted timber" becomes "Nyhavn station"), then recalls again for the name and reasons privately before answering. The 7B is reliable at each step alone and unreliable at both at once.
+
+Honest limits: these are small benchmarks, and a 7B still varies run to run. Recall is brute-force cosine in pure Python; fine to a few thousand memories, slow past that.
 
 ## Commands
 

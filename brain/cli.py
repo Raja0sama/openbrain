@@ -1,3 +1,4 @@
+import re
 import sys
 import threading
 import time
@@ -12,10 +13,21 @@ STATEMENT_RULE = (
     "relates to it, connect the two in a few words. You are being told this, so never "
     "say you don't know it and never ask to be taught it."
 )
+THINK_RULE = (
+    "Before you answer, think inside <think> and </think>: name the memories that "
+    "matter and chain them one step at a time until you reach the answer, or until "
+    "it is clear they cannot. If a memory states the answer outright, use it as "
+    "written and do no arithmetic. Only when you must calculate, write the sum inside "
+    "<think> as 'later year - earlier year = result', using only years from the "
+    "memories, and check it. Nobody sees this "
+    "part. After </think>, give the answer, and for arithmetic copy the sum you checked."
+)
 RECALL_RULE = (
     "The person asking is {user}, so 'my', 'me' and 'I' in the question mean {user}; "
     "when the answer is about {user}, address them as 'you' and 'your'. "
-    "Use the memories given, and nothing from outside them. You may combine "
+    "Use the memories given, and nothing from outside them. A memory marked outdated "
+    "was true once and has been corrected: use it only for what used to be the case. "
+    "You may combine "
     "several memories to reach an answer, and you may do arithmetic on numbers "
     "they contain: joining facts you were taught is reasoning, not guessing. "
     "Only when the memories genuinely cannot support an answer, start your reply "
@@ -47,6 +59,20 @@ def _parallel(**jobs):
     return out
 
 
+def _context(hits):
+    return "\n\n".join(
+        f"[{r['id']}]{' (outdated: was true once, not any more)' if r['invalid_at'] else ''} "
+        f"{r['text']}" for _, r in hits)
+
+
+def _unthink(text):
+    """Drop the private reasoning; keep what she says out loud."""
+    shown = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+    if not shown:  # she forgot to close the tag: take the last paragraph as the answer
+        shown = re.split(r"\n\s*\n", text.replace("<think>", "").strip())[-1].strip()
+    return shown
+
+
 def reply(db, question, k=5, history=None):
     """The fast half: everything that must happen before she can speak."""
     core = identity.load_core()
@@ -66,17 +92,30 @@ def reply(db, question, k=5, history=None):
         return "That would change who I am. I won't do that.", [], call
 
     if call["needs_memory"] or call["telling"]:
+        asked = question
+        if not call["telling"]:
+            # Multi-hop: name the thing the question describes, then recall for the name.
+            resolved = decide.resolve(question, _context(hits), system=me)
+            if resolved != question:
+                # Answer the resolved question with its own recall; the memories that
+                # matched the description come along only as extras.
+                more = memory.recall(db, resolved, k=k, touch=False)
+                seen = {r["id"] for _, r in more}
+                hits = more + [h for h in hits if h[1]["id"] not in seen][: k + 2 - len(more)]
+                asked = resolved
+                call["resolved"] = resolved
         memory.used(db, hits)
-        context = "\n\n".join(f"[{r['id']}] {r['text']}" for _, r in hits)
-        rule = STATEMENT_RULE if call["telling"] else RECALL_RULE.format(user=user, idk=IDK)
+        rule = (STATEMENT_RULE if call["telling"]
+                else RECALL_RULE.format(user=user, idk=IDK) + "\n\n" + THINK_RULE)
         label = f"{user} says" if call["telling"] else "Question"
         text = ollama.chat(
             [{"role": "system", "content": me + "\n\n" + rule}]
             + list(history or [])
             + [{"role": "user",
-                "content": f"Memories:\n{context}\n\n{label}: {question}"}],
+                "content": f"Memories:\n{_context(hits)}\n\n{label}: {asked}"}],
             temperature=0.3,
         )
+        text = _unthink(text)
     else:
         hits = []
         text = ollama.chat(
@@ -138,6 +177,8 @@ def _print(call, kept):
     flag = "" if call["ok"] else "  [judge offline]"
     label = "refused" if call["touches_core"] else call["intent"]
     print(f"  ({label}, memory={call['needs_memory']}){flag}")
+    if call.get("resolved"):
+        print(f"  (read as: {call['resolved']})")
     if call.get("gap"):
         print("  (gap logged -- run `brain gaps`)")
     for _, text, imp in kept:
