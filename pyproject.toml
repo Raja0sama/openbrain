@@ -1,0 +1,23 @@
+[project]
+name = "brain"
+version = "0.1.0"
+description = "A small brain that never grows, but becomes someone. A fixed local LLM with a growing memory graph, a personality that forms from experience, and a teacher it asks when it does not know."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [{ name = "Raja0sama" }]
+keywords = ["llm", "memory", "agent", "ollama", "local", "knowledge-graph", "personality", "lifelong-learning"]
+dependencies = ["anthropic>=1.13.0"]
+
+[project.urls]
+Repository = "https://github.com/raja0sama/openbrain"
+
+[project.scripts]
+brain = "brain.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["brain"]

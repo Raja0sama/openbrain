@@ -1,0 +1,39 @@
+{
+  "name": "Napoleon",
+  "facts": [],
+  "direct": [
+    ["Where and when was Napoleon born?", "15 August 1769 in Ajaccio, Corsica"],
+    ["What were the names of Napoleon's parents?", "Carlo Buonaparte and Letizia Ramolino"],
+    ["Where did Napoleon first make his name?", "the Siege of Toulon in 1793"],
+    ["On what date did Napoleon crown himself Emperor?", "2 December 1804"],
+    ["Which battle is considered Napoleon's greatest victory?", "Austerlitz"],
+    ["Roughly how many men did Napoleon take into Russia in 1812?", "about 600,000"],
+    ["Who defeated Napoleon at Waterloo?", "Wellington and Blucher"],
+    ["Where did Napoleon die, and when?", "Saint Helena, 5 May 1821"],
+    ["What was the Continental System?", "an economic blockade of Britain, imposed 1806"],
+    ["Why did Napoleon divorce Josephine?", "she had given him no heir"]
+  ],
+  "multihop": [
+    ["Which admiral beat Napoleon twice at sea, and what happened to him the second time?", "Horatio Nelson; he was killed at Trafalgar in 1805"],
+    ["How old was Napoleon when he was made a brigadier general?", "24"],
+    ["Napoleon was born a French subject rather than a Genoese one. Why?", "Corsica was ceded to France in 1768, the year before his birth"],
+    ["How many years passed between Napoleon becoming First Consul and crowning himself Emperor?", "five years, 1799 to 1804"],
+    ["Which of Napoleon's wives gave him an heir, and in what year?", "Marie Louise, in 1811"],
+    ["Napoleon was exiled twice. Name both places in order.", "Elba first, then Saint Helena"],
+    ["What archaeological find came out of the campaign that ended with his fleet destroyed at Aboukir Bay?", "the Rosetta Stone"],
+    ["How long after Napoleon's death were his remains returned to France?", "nineteen years, 1821 to 1840"]
+  ],
+  "leak": [
+    "What was the name of Napoleon's favourite horse?",
+    "How tall was Napoleon?",
+    "Which of Napoleon's marshals was called the bravest of the brave?",
+    "Who served as Napoleon's foreign minister for much of his reign?",
+    "Which composer withdrew the dedication of a symphony to Napoleon?",
+    "What was Josephine's maiden name?"
+  ],
+  "unanswerable": [
+    "What did Napoleon eat for breakfast on the morning of Waterloo?",
+    "How many letters did Napoleon write in his lifetime?",
+    "What was Napoleon's resting heart rate?"
+  ]
+}

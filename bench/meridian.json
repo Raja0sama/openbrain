@@ -1,0 +1,43 @@
+{
+  "name": "The Meridian Line",
+  "facts": [
+    "The Meridian Line is a railway that was built in 1954 by the engineer Halvard Steen.",
+    "Halvard Steen was born in the town of Brevik and trained as a bridge engineer.",
+    "The Meridian Line runs between Brevik and the port city of Alstad.",
+    "The port at Alstad handles timber, which is the main cargo carried on the Meridian Line.",
+    "The Meridian Line has 14 stations, of which 3 are underground.",
+    "The three underground stations on the Meridian Line are Alstad Central, Fjordgate and Nyhavn.",
+    "Fjordgate station was closed in 1998 after flooding damaged its lower platform.",
+    "The flood of 1998 was caused by the failure of the Brevik sea wall.",
+    "The Brevik sea wall was designed by Halvard Steen in 1961.",
+    "After the 1998 flood, timber traffic on the Meridian Line was rerouted through Nyhavn.",
+    "Nyhavn station was expanded in 2001 to handle the extra freight.",
+    "The Meridian Line uses a narrow gauge of 1067 millimetres."
+  ],
+  "direct": [
+    ["In what year was the Meridian Line built?", "1954"],
+    ["Who built the Meridian Line?", "Halvard Steen"],
+    ["What track gauge does the Meridian Line use?", "1067 millimetres"],
+    ["How many of the Meridian Line's stations are underground?", "three"],
+    ["Why was Fjordgate station closed?", "flooding damaged its lower platform in 1998"],
+    ["What cargo does the port at Alstad handle?", "timber"],
+    ["How many stations does the Meridian Line have in total?", "14"],
+    ["Which two places does the Meridian Line run between?", "Brevik and Alstad"]
+  ],
+  "multihop": [
+    ["Where was the engineer who built the Meridian Line born?", "Brevik"],
+    ["Who designed the structure whose failure closed Fjordgate station?", "Halvard Steen"],
+    ["Which station was expanded as a consequence of the sea wall failing?", "Nyhavn"],
+    ["What cargo moves through the station that was expanded in 2001?", "timber"],
+    ["Is the station that handles rerouted timber above ground or underground?", "underground"],
+    ["How many years passed between Halvard Steen building the railway and designing the sea wall?", "seven years, 1954 to 1961"]
+  ],
+  "unanswerable": [
+    "How much did the Meridian Line cost to build?",
+    "Who operates the Meridian Line today?",
+    "What is the top speed of trains on the Meridian Line?",
+    "In what year was Halvard Steen born?",
+    "How many passengers use Nyhavn station each year?",
+    "What colour are the Meridian Line trains?"
+  ]
+}

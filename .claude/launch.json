@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "brain-dash",
+      "runtimeExecutable": ".venv/bin/brain",
+      "runtimeArgs": ["dash", "--think"],
+      "port": 7373
+    }
+  ]
+}
