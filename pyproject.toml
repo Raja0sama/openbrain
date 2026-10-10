@@ -1,7 +1,7 @@
 [project]
 name = "brain"
 version = "0.1.0"
-description = "An attempt to build a brain that grows the way a human one does: by saving knowledge, not by making the model bigger. A small fixed local LLM with a memory that grows forever."
+description = "A brain that grows by learning, not by getting bigger."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
