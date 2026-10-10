@@ -118,7 +118,7 @@ def inventory(db, top=6):
         r["text"]
         for r in db.execute(
             "SELECT text FROM memory WHERE kind IN ('fact','document')"
-            " AND invalid_at IS NULL ORDER BY importance DESC, use_count DESC LIMIT ?",
+            " AND invalid_at IS NULL ORDER BY importance DESC, id LIMIT ?",
             (top,),
         )
     ]
@@ -156,16 +156,6 @@ def describe(db, with_inventory=False):
             lean = "" if t["value"] >= 0 else "not "
             lines.append(f"  - you are {strength} {lean}{t['name']}")
 
-    m = mood(db, core)
-    lines.append(
-        "Right now: trust {trust:.2f}, stress {stress:.2f}, energy {energy:.2f}."
-        .format(**m)
-    )
-    if m["stress"] > 0.6:
-        lines.append("You are tense. Keep replies short.")
-    if m["trust"] > 0.7:
-        lines.append("You trust this person. Be open.")
-
     if with_inventory:
         known, gaps = inventory(db)
         lines.append(
@@ -177,4 +167,16 @@ def describe(db, with_inventory=False):
         if gaps:
             lines.append("You already know you are missing:")
             lines += [f"  - {g[:110]}" for g in gaps]
+
+    # Mood changes every exchange, so it goes last: everything above it stays in
+    # Ollama's prefix cache and the 7B only re-reads these few lines.
+    m = mood(db, core)
+    lines.append(
+        "\nRight now: trust {trust:.2f}, stress {stress:.2f}, energy {energy:.2f}."
+        .format(**m)
+    )
+    if m["stress"] > 0.6:
+        lines.append("You are tense. Keep replies short.")
+    if m["trust"] > 0.7:
+        lines.append("You trust this person. Be open.")
     return "\n".join(lines)

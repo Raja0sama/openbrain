@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS memory_kind ON memory(kind);
 
 def connect():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    db = sqlite3.connect(DB_PATH)
+    db = sqlite3.connect(DB_PATH, check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
     migrate(db)

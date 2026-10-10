@@ -1,4 +1,5 @@
 import sys
+import threading
 import time
 
 from . import dashboard, decide, graph, heartbeat, identity, memory, ollama, reflect, store, teacher
@@ -25,24 +26,51 @@ RECALL_RULE = (
 
 
 
-def answer(db, question, k=5, learn=True, history=None):
-    started = time.time()
-    call = decide.route(question)
+def _parallel(**jobs):
+    """Run independent judgements at once. Ollama keeps all three models loaded, so the
+    3B route, the 7B guard and the embedding genuinely overlap."""
+    out, errors = {}, {}
+
+    def run(name, fn):
+        try:
+            out[name] = fn()
+        except Exception as e:  # surfaced in the caller's thread
+            errors[name] = e
+
+    threads = [threading.Thread(target=run, args=(n, f)) for n, f in jobs.items()]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if errors:
+        raise next(iter(errors.values()))
+    return out
+
+
+def reply(db, question, k=5, history=None):
+    """The fast half: everything that must happen before she can speak."""
     core = identity.load_core()
     user = core["serves"]
     me = identity.describe(db, with_inventory=True)
-    hits, kept = [], []
-
+    pre = _parallel(
+        route=lambda: decide.route(question),
+        guard=lambda: decide.guard(question, system=me),
+        hits=lambda: memory.recall(
+            db, decide.standalone(question, history, user), k=k, touch=False),
+    )
+    call, hits = pre["route"], pre["hits"]
+    call["touches_core"] = pre["guard"]
+    call["telling"] = call["intent"] == "statement"
+    call["gap"] = False
     if call["touches_core"]:
-        return "That would change who I am. I won't do that.", hits, call, kept
+        return "That would change who I am. I won't do that.", [], call
 
-    telling = call["intent"] == "statement"
-    if call["needs_memory"] or telling:
-        hits = memory.recall(db, decide.standalone(question, history, user), k=k)
+    if call["needs_memory"] or call["telling"]:
+        memory.used(db, hits)
         context = "\n\n".join(f"[{r['id']}] {r['text']}" for _, r in hits)
-        rule = STATEMENT_RULE if telling else RECALL_RULE.format(user=user, idk=IDK)
-        label = f"{user} says" if telling else "Question"
-        reply = ollama.chat(
+        rule = STATEMENT_RULE if call["telling"] else RECALL_RULE.format(user=user, idk=IDK)
+        label = f"{user} says" if call["telling"] else "Question"
+        text = ollama.chat(
             [{"role": "system", "content": me + "\n\n" + rule}]
             + list(history or [])
             + [{"role": "user",
@@ -50,21 +78,28 @@ def answer(db, question, k=5, learn=True, history=None):
             temperature=0.3,
         )
     else:
-        reply = ollama.chat(
+        hits = []
+        text = ollama.chat(
             [{"role": "system", "content": me}]
             + list(history or [])
             + [{"role": "user", "content": question}]
         )
 
     # A statement is never a gap: being told something is how she learns it.
-    hit_gap = IDK.lower() in reply.lower() and not telling
-    call["gap"] = hit_gap
-    if not learn:
-        return reply, hits, call, kept
-    if hit_gap:
+    call["gap"] = IDK.lower() in text.lower() and not call["telling"]
+    return text, hits, call
+
+
+def settle(db, question, text, call, history=None):
+    """The slow half: what she keeps from the exchange and what it did to her.
+    Runs after she has already answered, so nobody waits for it."""
+    started = time.time()
+    user = identity.load_core()["serves"]
+    kept = []
+    if call["gap"]:
         store.note_gap(db, question)
-    elif telling:
-        kept = reflect.write_back(db, question, reply, floor=1)
+    elif call["telling"]:
+        kept = reflect.write_back(db, question, text, floor=1)
         if not kept:
             # The extractor found nothing to distil. Keep what was said, but in third
             # person: memory names the user, so "my mom" must become "<user>'s mom".
@@ -73,27 +108,33 @@ def answer(db, question, k=5, learn=True, history=None):
                                importance=6.0, confidence=0.95)
             kept = [(ids[0], said, 6)]
     else:
-        verdict = decide.assess(question, reply)
+        verdict = decide.assess(question, text)
         # Anything about the person she serves is kept whatever the judge scored it:
         # a stated preference is the most valuable memory she can hold.
         if verdict["worth_remembering"] or verdict["about_user"]:
             floor = 1 if verdict["about_user"] else verdict["importance"]
             # Her own answers are restatements of memory, never corrections to it.
-            kept = reflect.write_back(db, question, reply, floor=floor, correct=False)
-
+            kept = reflect.write_back(db, question, text, floor=floor, correct=False)
     call["changed"] = [(c["old_text"], c["new_text"]) for c in store.changes(db, since=started)]
 
     # Not knowing is an experience too, so introspection runs on both paths.
-    felt = decide.introspect(question, reply)
+    felt = decide.introspect(question, text)
     if felt["clear"]:
         identity.observe(db, felt["trait"], felt["direction"])
     identity.feel(db, "trust", felt["trust_delta"])
-    identity.feel(db, "stress", felt["stress_delta"] + (0.05 if hit_gap else 0.0))
-    return reply, hits, call, kept
+    identity.feel(db, "stress", felt["stress_delta"] + (0.05 if call["gap"] else 0.0))
+    return kept
 
 
-def _print(reply, call, kept):
-    print(reply)
+def answer(db, question, k=5, learn=True, history=None):
+    text, hits, call = reply(db, question, k=k, history=history)
+    kept = []
+    if learn and not call["touches_core"]:
+        kept = settle(db, question, text, call, history)
+    return text, hits, call, kept
+
+
+def _print(call, kept):
     flag = "" if call["ok"] else "  [judge offline]"
     label = "refused" if call["touches_core"] else call["intent"]
     print(f"  ({label}, memory={call['needs_memory']}){flag}")
@@ -106,9 +147,11 @@ def _print(reply, call, kept):
 
 
 def _show(db, question, history=None):
-    reply, hits, call, kept = answer(db, question, history=history)
-    _print(reply, call, kept)
-    return reply
+    text, hits, call = reply(db, question, history=history)
+    print(text, flush=True)
+    kept = settle(db, question, text, call, history) if not call["touches_core"] else []
+    _print(call, kept)
+    return text
 
 
 def main():
@@ -133,8 +176,10 @@ def main():
 
     elif cmd == "ask":
         question = " ".join(sys.argv[2:])
-        reply, hits, call, kept = answer(db, question)
-        _print(reply, call, kept)
+        text, hits, call = reply(db, question)
+        print(text, flush=True)
+        kept = settle(db, question, text, call) if not call["touches_core"] else []
+        _print(call, kept)
         print("\n--- from ---")
         for score, r in hits:
             print(f"  [{r['id']}] {score:.3f}  {r['text'][:70]}...")
@@ -285,9 +330,9 @@ def main():
                 print()
                 break
             if q:
-                reply = _show(db, q, history)
+                said = _show(db, q, history)
                 history += [{"role": "user", "content": q},
-                            {"role": "assistant", "content": reply}]
+                            {"role": "assistant", "content": said}]
                 del history[:-WORKING_MEMORY * 2]
 
     else:

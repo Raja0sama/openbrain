@@ -124,17 +124,27 @@ class Handler(BaseHTTPRequestHandler):
                      "content": m["text"]}
                 )
             try:
-                reply, _, call, kept = cli.answer(db, text, history=history)
+                reply, _, call = cli.reply(db, text, history=history)
             except Exception as e:
-                reply, call, kept = f"something broke: {e}", {"intent": "error"}, []
-        CHAT.append({
+                reply, call = f"something broke: {e}", {"intent": "error", "touches_core": True}
+        entry = {
             "role": "assistant", "text": reply, "at": time.time(),
             "intent": "refused" if call.get("touches_core") else call.get("intent", ""),
-            "learned": [{"text": t, "importance": i} for _, t, i in kept],
-            "changed": [{"was": o, "now": n} for o, n in call.get("changed", [])],
+            "learned": [], "changed": [],
             "gap": cli.IDK.lower() in reply.lower(),
-        })
+        }
+        CHAT.append(entry)
         self._send(json.dumps({"ok": True}).encode(), "application/json")
+        if call.get("touches_core"):
+            return
+        # She has answered. Now, with the reply already on screen, she keeps what matters.
+        with BUSY:
+            try:
+                kept = cli.settle(db, text, reply, call, history)
+            except Exception:
+                return
+        entry["learned"] = [{"text": t, "importance": i} for _, t, i in kept]
+        entry["changed"] = [{"was": o, "now": n} for o, n in call.get("changed", [])]
 
     def do_GET(self):
         if self.path.startswith("/api/state"):

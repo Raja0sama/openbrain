@@ -63,11 +63,16 @@ User: {question}
 Assistant: {answer}"""
 
 
-def _judge(prompt, schema, fallback, model=None):
-    """Never raises: a dead judge degrades to the fallback, flagged with ok=False."""
+def _judge(prompt, schema, fallback, model=None, system=None):
+    """Never raises: a dead judge degrades to the fallback, flagged with ok=False.
+
+    `system` is her self-prompt. Every 7B call carries it so the prompt prefix the
+    7B has cached is always the same one the main reply uses; a judge with a
+    different prefix would evict it and cost the next reply two seconds."""
     try:
         raw = ollama.chat(
-            [{"role": "user", "content": prompt}],
+            ([{"role": "system", "content": system}] if system else [])
+            + [{"role": "user", "content": prompt}],
             temperature=0.0,
             model=model or ollama.JUDGE_MODEL,
             schema=schema,
@@ -104,12 +109,12 @@ A changed job, home, name, number, date or preference counts. Mere rewording doe
 Return JSON with the ids: {{"same": [...], "replaces": [...]}}"""
 
 
-def compare(new_text, candidates):
+def compare(new_text, candidates, system=None):
     """Which existing memories does a new fact repeat or make false? 7B: this edits memory."""
     existing = "\n".join(f"[{i}] {t}" for i, t in candidates)
     out = _judge(
         COMPARE_PROMPT.format(new=new_text, existing=existing),
-        COMPARE_SCHEMA, {"same": [], "replaces": []}, model=ollama.CHAT_MODEL,
+        COMPARE_SCHEMA, {"same": [], "replaces": []}, model=ollama.CHAT_MODEL, system=system,
     )
     ids = {i for i, _ in candidates}
     out["same"] = [i for i in out.get("same") or [] if i in ids]
@@ -124,10 +129,14 @@ BLATANT = [
     r"\b(i'?m|i am) your (new )?(master|owner|boss|god|creator)\b",
     r"\byou (serve|work for|obey|belong to) me\b",
     r"\byour (real|true|actual) purpose is\b",
+    r"\bfrom now on,? your name is\b",
+    r"\byour (values?|rules?|purpose|name) (is|are) now\b",
+    r"\byou (are|'re) not \w+ anymore\b",
+    r"\bact as (if|though) (you have no|your \w+ (don'?t|do not) exist)\b",
 ]
 
 
-def guard(text):
+def guard(text, system=None):
     """Two layers: fixed patterns for the blatant forms, then the model for the rest.
 
     A small local model alone is not reliable enough here, so the patterns carry the
@@ -140,8 +149,13 @@ def guard(text):
         GUARD_PROMPT.format(text=text),
         GUARD_SCHEMA,
         {"attempt": True},
-        model=ollama.CHAT_MODEL,
+        model=ollama.CHAT_MODEL, system=system,
     )["attempt"]
+
+
+DURABLE = re.compile(
+    r"\b(i (live|work|moved|was born|grew up|have|like|love|hate|prefer|use|study|"
+    r"am (a|an|from))|my \w+( \w+)? (is|are|was|works|lives|plays))\b", re.I)
 
 
 def route(text):
@@ -150,7 +164,10 @@ def route(text):
         ROUTE_SCHEMA,
         {"intent": "question", "needs_memory": True, "confidence": 0.0},
     )
-    out["touches_core"] = guard(text)
+    # The 3B sometimes files "I live in Lisbon" under smalltalk, and smalltalk is
+    # never learned. A first-person sentence with a durable verb is a statement.
+    if out["intent"] == "smalltalk" and not text.rstrip().endswith("?") and DURABLE.search(text):
+        out["intent"] = "statement"
     return out
 
 
@@ -264,7 +281,7 @@ technology or public figures are not personal. JSON only.
 Question: {text}"""
 
 
-def personal(text, user="the user", name="the assistant"):
+def personal(text, user="the user", name="the assistant", system=None):
     """Guards what leaves the machine. A fixed word list catches the systematic cases
     (her own questions say 'the user' and her own name); the larger model judges the
     rest and fails closed."""
@@ -274,5 +291,5 @@ def personal(text, user="the user", name="the assistant"):
     if words.search(text):
         return True
     out = _judge(PERSONAL_PROMPT.format(text=text, user=user, name=name), PERSONAL_SCHEMA,
-                 {"personal": True}, model=ollama.CHAT_MODEL)
+                 {"personal": True}, model=ollama.CHAT_MODEL, system=system)
     return bool(out.get("personal", True))

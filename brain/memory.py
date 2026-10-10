@@ -103,7 +103,14 @@ def learn(db, text, source=None, kind="episode", importance=5.0,
     return ids
 
 
-def recall(db, query, k=5, kinds=None, seeds=3):
+def used(db, hits):
+    """Mark a recall as actually used: touch the memories, wire them together."""
+    ids = [r["id"] for _, r in hits]
+    store.touch(db, ids)
+    graph.strengthen(db, ids)
+
+
+def recall(db, query, k=5, kinds=None, seeds=3, touch=True):
     qvec = ollama.embed(query)[0]
     direct = ranked(db, qvec, kinds)
     entry = {i: s for s, i in direct[:seeds] if s > 0}
@@ -119,7 +126,7 @@ def recall(db, query, k=5, kinds=None, seeds=3):
 
     rows = {r["id"]: r for r in store.get(db, [i for i, _ in best]) if r["invalid_at"] is None}
     best = [(i, s) for i, s in best if i in rows]
-    ids = [i for i, _ in best]
-    store.touch(db, ids)
-    graph.strengthen(db, ids)
-    return [(s, rows[i]) for i, s in best]
+    hits = [(s, rows[i]) for i, s in best]
+    if touch:
+        used(db, hits)
+    return hits
