@@ -4,7 +4,9 @@
 
 **A small brain that never grows, but becomes someone.**
 
-A local AI with a small fixed model and a memory that grows forever. It learns from every conversation, admits what it doesn't know, asks a teacher when it's stuck, and forms a personality over time. Everything runs on your laptop, and nothing about you ever leaves it.
+**What I'm trying to build:** a brain that grows the way a human's does. Not by making the model bigger, but by saving what it learns.
+
+The model is small, local, and never changes. Everything it knows lives outside it, in a memory that grows forever. It learns from every conversation, admits what it doesn't know, asks a teacher when it's stuck, and forms a personality over time. It runs on your laptop, and nothing about you ever leaves it.
 
 ```
 > Where was Napoleon born?

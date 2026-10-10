@@ -1,7 +1,7 @@
 [project]
 name = "brain"
 version = "0.1.0"
-description = "A local AI with a small fixed model and a memory that grows forever. Learns from every conversation, admits what it does not know, asks a teacher when stuck, and forms a personality over time."
+description = "An attempt to build a brain that grows the way a human one does: by saving knowledge, not by making the model bigger. A small fixed local LLM with a memory that grows forever."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
