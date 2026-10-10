@@ -21,7 +21,7 @@ Mira is a pilot.
 Your sister Mira is a pilot.
 ```
 
-That second answer is the point. The 7B underneath knows the horse was Marengo. She wasn't taught it, so she won't say it. The transcript above is a real session on a fresh install, 28 facts in.
+That second answer is the point. She answers from what she was taught first. When memory has nothing, she may use what the model already knows, but only when it's sure, and she flags it as not taught. Here it wasn't sure, so she said so. The transcript above is a real session on a fresh install, 28 facts in.
 
 ## The bet
 
@@ -29,7 +29,7 @@ A human brain's hardware doesn't change. What changes is what it knows and how i
 
 - **The model is fixed and small.** Qwen 2.5 7B talks. Qwen 2.5 3B judges. Both via Ollama.
 - **All knowledge lives outside the model**, in a SQLite memory graph that links itself and strengthens with use.
-- **It only knows what it was taught.** Asked something outside its memory, it says so instead of guessing, even when the underlying model knows the answer.
+- **Memory first, model second.** She answers from what she was taught. If memory has nothing, she may answer from what the model already knows, flagged as not taught, and never about people. Correct her and the correction is saved to memory, which wins from then on.
 - **When it can't answer, it asks a teacher** (your Claude Code login, one question per gap, capped per day) and remembers the lesson forever.
 - **Personality forms from experience**, on top of a small locked core of values that conversation cannot erode.
 
@@ -56,7 +56,7 @@ Or skip the dashboard: `.venv/bin/brain repl`.
 | `identity.py` | The locked core (`data/core.json`), traits that need 3 consistent observations to form, elastic mood. |
 | `heartbeat.py` | What she does when nobody's talking: wonders about what she knows, chases open gaps, tidies. |
 | `teacher.py` | Asks a frontier model when she can't resolve a gap herself. Logged, capped, never sent anything personal. |
-| `dashboard.py` | Live graph, character, mood, gap queue, chat, and her thought stream. |
+| `dashboard.py` | A still graph, character, mood, gap queue, streaming chat and her thought stream, pushed over one WebSocket. |
 
 Pure stdlib plus SQLite. The only dependency is the Anthropic SDK, and only if you choose the API backend for the teacher.
 

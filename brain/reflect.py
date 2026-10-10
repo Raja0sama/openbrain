@@ -7,8 +7,9 @@ PROMPT = """You just had this exchange. Extract only durable facts worth remembe
 
 Keep anything the user states about themselves: preferences, habits, their work, \
 their name, how they want to be spoken to. Those are durable and always worth keeping.
-The user is {user}. Write every fact in third person and name them: "my sister Mira" \
-becomes "{user}'s sister Mira", "I live in Lisbon" becomes "{user} lives in Lisbon".
+The user is {user}. Write every fact in third person and name them, so "my <relative>" \
+becomes "{user}'s <relative>" and "I <verb>" becomes "{user} <verb>s". Only extract what \
+this exchange actually says; never invent a fact to fill the list.
 Skip pleasantries and anything true only right now.
 Rate importance 1-10: 1 is trivial, 10 is core to who the user is.
 

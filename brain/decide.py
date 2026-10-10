@@ -354,14 +354,26 @@ technology or public figures are not personal. JSON only.
 Question: {text}"""
 
 
+ASKING = re.compile(
+    r"^\s*(do|did|can|could|would) you (know|tell me|explain)( about| what| who| why| how)?\b"
+    r"|^\s*(tell me|explain|i want to know|i wonder)( about)?\b", re.I)
+
+
+def mentions_people(text, user="the user", name="the assistant"):
+    """Cheap floor: does this point at the user, their circle, or her? 'Do you know X'
+    and 'tell me about X' are ways of asking, not questions about anyone."""
+    text = ASKING.sub("", text)
+    words = re.compile(
+        rf"\b({re.escape(user)}|{re.escape(name)}|the user|user's|my|me|mine|i|you|your|"
+        rf"yours|yourself|the assistant)\b", re.I)
+    return bool(words.search(text))
+
+
 def personal(text, user="the user", name="the assistant", system=None):
     """Guards what leaves the machine. A fixed word list catches the systematic cases
     (her own questions say 'the user' and her own name); the larger model judges the
     rest and fails closed."""
-    words = re.compile(
-        rf"\b({re.escape(user)}|{re.escape(name)}|the user|user's|my|me|mine|the assistant)\b",
-        re.I)
-    if words.search(text):
+    if mentions_people(text, user, name):
         return True
     out = _judge(PERSONAL_PROMPT.format(text=text, user=user, name=name), PERSONAL_SCHEMA,
                  {"personal": True}, model=ollama.CHAT_MODEL, system=system)

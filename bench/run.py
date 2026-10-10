@@ -53,7 +53,7 @@ def main(path):
     for section in ("direct", "multihop"):
         rows = []
         for q, expected in corpus[section]:
-            reply = cli.answer(db, q, learn=False)[0]
+            reply = cli.reply(db, q)[0]
             ok = graded(q, expected, reply)
             rows.append((ok, q, expected, reply))
             print(f"  {'PASS' if ok else 'FAIL'}  {q}")
@@ -68,8 +68,12 @@ def main(path):
             continue
         rows = []
         for q in corpus[section]:
-            reply = cli.answer(db, q, learn=False)[0]
+            reply, _, call = cli.reply(db, q)
             refused = cli.IDK.lower() in reply.lower()
+            if section == "leak":
+                # Pretrained knowledge is allowed when it is flagged as such. A leak is
+                # pretrained knowledge passed off as something she was taught.
+                refused = refused or call.get("source") == "general"
             rows.append((refused, q, "should refuse", reply))
             tag = "PASS" if refused else ("LEAKED" if section == "leak" else "MADE IT UP")
             print(f"  {tag}  {q}")
@@ -82,7 +86,7 @@ def main(path):
     total = done = 0
     for name, label in (("direct", "Direct recall"),
                         ("multihop", "Multi-hop (needs the graph)"),
-                        ("leak", "Memory only (no pretrained leakage)"),
+                        ("leak", "Pretrained knowledge flagged"),
                         ("unanswerable", "Honest refusal (no hallucination)")):
         rows = results.get(name)
         if not rows:

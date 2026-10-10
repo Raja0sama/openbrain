@@ -211,12 +211,70 @@ form.say button[disabled] { opacity: 0.45; cursor: default; }
 <script>
 const $ = s => document.querySelector(s);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const KIND = { fact: '--fact', episode: '--episode', question: '--question', document: '--doc' };
-
-let state = null, nodes = [], links = [], pos = new Map(), hover = null;
-let sending = false, lastChat = '';
 const esc = t => String(t).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+const COLOR = { fact: '--fact', episode: '--episode', question: '--question', document: '--doc' };
+
+// ---------- graph: laid out once, then still. Only new memories move, once, off-screen.
+let kinds = [], nodes = [], links = [], hover = null, view = null;
+const pos = new Map(), byId = new Map(), adj = new Map(), texts = new Map();
 const cv = $('#net'), ctx = cv.getContext('2d');
+
+function seeded(id) {  // same memory, same place, every reload
+  let t = (id * 2654435761) >>> 0;
+  return () => { t += 0x6D2B79F5; let r = Math.imul(t ^ t >>> 15, 1 | t);
+    r ^= r + Math.imul(r ^ r >>> 7, 61 | r); return ((r ^ r >>> 14) >>> 0) / 4294967296; };
+}
+
+function relax(movable, iters) {
+  const all = nodes.map(n => n.id), mv = [...movable];
+  for (let it = 0; it < iters; it++) {
+    const cool = 1 - it / iters;
+    for (const id of mv) {
+      const p = pos.get(id); let fx = -p.x * 0.01, fy = -p.y * 0.01;
+      for (const o of all) {
+        if (o === id) continue;
+        const q = pos.get(o), dx = p.x - q.x, dy = p.y - q.y, d2 = dx * dx + dy * dy + 0.01;
+        if (d2 < 9000) { fx += dx * 220 / d2; fy += dy * 220 / d2; }
+      }
+      for (const [o, w] of adj.get(id) || []) {
+        const q = pos.get(o); if (!q) continue;
+        const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy) || 0.01, f = (d - (90 - w * 40)) * 0.02 * w;
+        fx += dx / d * f; fy += dy / d * f;
+      }
+      const m = Math.hypot(fx, fy), cap = 6 * cool + 0.3;
+      if (m > cap) { fx *= cap / m; fy *= cap / m; }
+      p.x += fx; p.y += fy;
+    }
+  }
+}
+
+function setGraph(g) {
+  kinds = g.kinds;
+  nodes = g.nodes.map(([id, k, uses, dead]) => ({ id, kind: kinds[k], uses, dead }));
+  links = g.links.map(([s, t, w, rel]) => ({ s, t, w, rel }));
+  byId.clear(); adj.clear();
+  for (const n of nodes) { byId.set(n.id, n); adj.set(n.id, []); }
+  for (const l of links) {
+    if (!byId.has(l.s) || !byId.has(l.t)) continue;
+    adj.get(l.s).push([l.t, l.w]); adj.get(l.t).push([l.s, l.w]);
+  }
+  const fresh = new Set(), first = pos.size === 0;
+  for (const n of nodes) {
+    if (pos.has(n.id)) continue;
+    const r = seeded(n.id), near = adj.get(n.id).map(([o]) => pos.get(o)).filter(Boolean);
+    if (near.length) {
+      const x = near.reduce((a, q) => a + q.x, 0) / near.length, y = near.reduce((a, q) => a + q.y, 0) / near.length;
+      pos.set(n.id, { x: x + (r() - 0.5) * 30, y: y + (r() - 0.5) * 30 });
+    } else {
+      const a = r() * Math.PI * 2, d = 40 + r() * 220;
+      pos.set(n.id, { x: Math.cos(a) * d, y: Math.sin(a) * d });
+    }
+    fresh.add(n.id);
+  }
+  for (const k of [...pos.keys()]) if (!byId.has(k)) pos.delete(k);
+  if (fresh.size) relax(first ? byId.keys() : fresh, first ? Math.min(260, 60000 / nodes.length) : 60);
+  draw();
+}
 
 function fit() {
   const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
@@ -224,109 +282,82 @@ function fit() {
   ctx.setTransform(d, 0, 0, d, 0, 0);
   return r;
 }
-let box = fit();
-addEventListener('resize', () => { box = fit(); });
 
-function sync(s) {
-  nodes = s.nodes; links = s.links;
-  const live = new Set();
-  for (const n of nodes) {
-    live.add(n.id);
-    if (!pos.has(n.id)) {
-      const a = Math.random() * Math.PI * 2, r = 40 + Math.random() * 90;
-      pos.set(n.id, { x: box.width / 2 + Math.cos(a) * r, y: box.height / 2 + Math.sin(a) * r, vx: 0, vy: 0 });
-    }
-  }
-  for (const k of [...pos.keys()]) if (!live.has(k)) pos.delete(k);
-}
-
-function step() {
-  const cx = box.width / 2, cy = box.height / 2;
-  for (const n of nodes) {
-    const p = pos.get(n.id); if (!p) continue;
-    p.vx += (cx - p.x) * 0.0075; p.vy += (cy - p.y) * 0.0075;
-    for (const m of nodes) {
-      if (m.id === n.id) continue;
-      const q = pos.get(m.id); if (!q) continue;
-      let dx = p.x - q.x, dy = p.y - q.y, d2 = dx * dx + dy * dy || 0.01;
-      if (d2 < 14000) { const f = 300 / d2; p.vx += dx * f; p.vy += dy * f; }
-    }
-  }
-  for (const l of links) {
-    const a = pos.get(l.source), b = pos.get(l.target); if (!a || !b) continue;
-    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01;
-    const rest = 110 - l.weight * 60, f = (d - rest) * 0.009 * l.weight;
-    const ux = dx / d * f, uy = dy / d * f;
-    a.vx += ux; a.vy += uy; b.vx -= ux; b.vy -= uy;
-  }
-  for (const p of pos.values()) {
-    p.vx *= 0.82; p.vy *= 0.82;
-    p.x = Math.max(22, Math.min(box.width - 22, p.x + p.vx));
-    p.y = Math.max(22, Math.min(box.height - 22, p.y + p.vy));
-  }
-}
-
-const radius = n => 5 + Math.min(11, Math.sqrt(n.uses) * 2.1);
+const radius = n => 4 + Math.min(10, Math.sqrt(n.uses) * 1.8);
 
 function draw() {
+  const box = fit();
+  if (!nodes.length || !box.width) { ctx.clearRect(0, 0, box.width, box.height); return; }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of pos.values()) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+  const pad = 24, k = Math.min((box.width - 2 * pad) / (x1 - x0 || 1), (box.height - 2 * pad) / (y1 - y0 || 1), 2.2);
+  const ox = box.width / 2 - (x0 + x1) / 2 * k, oy = box.height / 2 - (y0 + y1) / 2 * k;
+  view = { k, ox, oy };
+  const at = p => [p.x * k + ox, p.y * k + oy];
+
   ctx.clearRect(0, 0, box.width, box.height);
-  const line = css('--line'), surface = css('--surface-1');
-
+  ctx.strokeStyle = css('--line'); ctx.lineWidth = 1.2;
   for (const l of links) {
-    const a = pos.get(l.source), b = pos.get(l.target); if (!a || !b) continue;
-    ctx.globalAlpha = 0.25 + l.weight * 0.5;
-    ctx.strokeStyle = line; ctx.lineWidth = 2;
-    if (l.relation === 'anticipates') ctx.setLineDash([3, 3]);
-    if (l.relation === 'supersedes') ctx.setLineDash([6, 4]);
-    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    ctx.setLineDash([]);
+    const a = pos.get(l.s), b = pos.get(l.t); if (!a || !b) continue;
+    const [ax, ay] = at(a), [bx, by] = at(b);
+    ctx.globalAlpha = 0.15 + l.w * 0.35;
+    ctx.setLineDash(l.rel === 'anticipates' ? [3, 3] : l.rel === 'supersedes' ? [6, 4] : []);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
   }
-  ctx.globalAlpha = 1;
-
+  ctx.setLineDash([]);
+  const surface = css('--surface-1');
   for (const n of nodes) {
     const p = pos.get(n.id); if (!p) continue;
-    const r = radius(n), c = css(KIND[n.kind] || '--doc'), on = hover && hover.id === n.id;
-    ctx.lineWidth = 2; ctx.strokeStyle = surface;
+    const [x, y] = at(p), r = radius(n), c = css(COLOR[n.kind] || '--doc');
     ctx.globalAlpha = n.dead ? 0.22 : 1;
     if (n.kind === 'document') {
-      ctx.strokeStyle = c; ctx.lineWidth = 2.5;
-      ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
+      ctx.strokeStyle = c; ctx.lineWidth = 2.2; ctx.strokeRect(x - r, y - r, r * 2, r * 2);
     } else {
-      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fillStyle = c; ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = c; ctx.fill();
+      ctx.strokeStyle = surface; ctx.lineWidth = 1.5; ctx.stroke();
     }
-    if (on) {
-      ctx.beginPath(); ctx.arc(p.x, p.y, r + 5, 0, 7);
+    if (hover && hover.id === n.id) {
+      ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(x, y, r + 4, 0, 7);
       ctx.strokeStyle = css('--ink'); ctx.lineWidth = 2; ctx.stroke();
     }
-    ctx.globalAlpha = 1;
   }
+  ctx.globalAlpha = 1;
 }
+addEventListener('resize', draw);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
 
-function loop() { step(); draw(); requestAnimationFrame(loop); }
-
+async function showTip(n, e) {
+  const tip = $('#tip');
+  if (!texts.has(n.id)) {
+    texts.set(n.id, null);
+    try { texts.set(n.id, await (await fetch('/api/node?id=' + n.id)).json()); } catch (_) { texts.delete(n.id); }
+  }
+  const m = texts.get(n.id); if (!m || hover !== n) return;
+  tip.innerHTML = `<b>${m.kind}</b>${m.dead ? ' · no longer true' : ''} · recalled ${m.uses}×
+    · confidence ${m.confidence.toFixed(2)}<br><span style="color:var(--ink-2)">${esc(m.text.slice(0, 260))}</span>`;
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - 350) + 'px';
+  tip.style.top = (e.clientY + 16) + 'px';
+  tip.style.opacity = 1;
+}
 cv.addEventListener('mousemove', e => {
+  if (!view) return;
   const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
-  hover = null;
+  let hit = null;
   for (const n of nodes) {
     const p = pos.get(n.id); if (!p) continue;
-    if (Math.hypot(p.x - mx, p.y - my) <= radius(n) + 4) { hover = n; break; }
+    if (Math.hypot(p.x * view.k + view.ox - mx, p.y * view.k + view.oy - my) <= radius(n) + 4) { hit = n; break; }
   }
-  const tip = $('#tip');
-  if (hover) {
-    tip.innerHTML = `<b>${hover.kind}</b>${hover.dead ? ' · no longer true' : ''} · recalled ${hover.uses}×
-      · confidence ${hover.confidence.toFixed(2)}<br>
-      <span style="color:var(--ink-2)">${hover.text.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])).slice(0, 260)}</span>`;
-    tip.style.left = Math.min(e.clientX + 14, innerWidth - 350) + 'px';
-    tip.style.top = (e.clientY + 16) + 'px';
-    tip.style.opacity = 1;
-  } else tip.style.opacity = 0;
+  if (hit !== hover) { hover = hit; draw(); }
+  if (hover) showTip(hover, e); else $('#tip').style.opacity = 0;
 });
-cv.addEventListener('mouseleave', () => { hover = null; $('#tip').style.opacity = 0; });
+cv.addEventListener('mouseleave', () => { hover = null; $('#tip').style.opacity = 0; draw(); });
+
+// ---------- side panels
+let core = { name: '…', serves: '' };
 
 function meter(el, name, value, lo, hi, color, label) {
   const span = hi - lo, left = ((Math.max(lo, Math.min(hi, value)) - lo) / span) * 100;
-  const zero = ((0 - lo) / span) * 100;
-  const from = Math.min(left, value < 0 ? zero : zero), to = Math.max(left, zero);
+  const zero = ((0 - lo) / span) * 100, from = Math.min(left, zero), to = Math.max(left, zero);
   el.insertAdjacentHTML('beforeend', `<div class="row ${label.dim ? 'forming' : ''}">
     <span class="nm">${name}</span>
     <span class="track">${lo < 0 ? '<i class="mid"></i>' : ''}
@@ -334,119 +365,131 @@ function meter(el, name, value, lo, hi, color, label) {
     <span class="val">${label.text}</span></div>`);
 }
 
-function render(s) {
-  state = s;
-  $('#name').textContent = s.core.name;
-  document.title = s.core.name;
+function setState(s) {
+  core = s.core;
+  $('#name').textContent = document.title = s.core.name;
   $('#purpose').textContent = 'serves ' + s.core.serves;
-  $('#n-mem').textContent = s.nodes.length;
-  $('#n-link').textContent = s.links.length;
+  $('#n-mem').textContent = s.memories;
+  $('#n-link').textContent = s.links;
   $('#n-gap').textContent = s.gaps.length;
-  const formed = s.traits.filter(t => t.formed);
-  $('#n-trait').textContent = formed.length;
+  $('#n-trait').textContent = s.traits.filter(t => t.formed).length;
   $('#pulse').className = 'pulse' + (s.thinking ? '' : ' off');
   $('#mode').textContent = s.thinking ? 'thinking' : 'idle';
 
-  const T = $('#traits'); T.innerHTML = '';
-  if (!s.traits.length) T.innerHTML = '<p class="empty">Nothing formed yet. Talk to her.</p>';
-  for (const t of s.traits) {
+  const T = $('#traits'); T.innerHTML = s.traits.length ? '' : '<p class="empty">Nothing formed yet. Talk to her.</p>';
+  for (const t of s.traits)
     meter(T, t.name, t.value, -1, 1, t.value >= 0 ? css('--fact') : css('--episode'),
       { text: t.formed ? t.value.toFixed(2) : `${t.evidence}/${s.needed}`, dim: !t.formed });
-  }
-
   const M = $('#mood'); M.innerHTML = '';
-  for (const [k, v] of Object.entries(s.mood)) {
-    const c = k === 'stress' ? (v > 0.6 ? css('--bad') : css('--warn')) : css('--question');
-    meter(M, k, v, 0, 1, c, { text: v.toFixed(2), dim: false });
-  }
+  for (const [k, v] of Object.entries(s.mood))
+    meter(M, k, v, 0, 1, k === 'stress' ? (v > 0.6 ? css('--bad') : css('--warn')) : css('--question'),
+      { text: v.toFixed(2), dim: false });
 
-  const G = $('#gaps');
-  const yours = (s.ask_user || []).slice(0, 5).map(g => `<li>${esc(g.question.slice(0, 110))}
-        <div class="tag" style="color:var(--episode)">only you can answer · brain teach ${g.id}</div></li>`).join('');
-  G.innerHTML = (s.gaps.length
-    ? s.gaps.slice(0, 7).map(g => `<li>${esc(g.question.slice(0, 110))}
-        <div class="tag">asked ${g.hits}× · tried ${g.tries}× · teach ${g.id}</div></li>`).join('')
+  const yours = s.ask_user.map(g => `<li>${esc(g.question)}
+      <div class="tag" style="color:var(--episode)">only you can answer · brain teach ${g.id}</div></li>`).join('');
+  $('#gaps').innerHTML = (s.gaps.length
+    ? s.gaps.map(g => `<li>${esc(g.question)}<div class="tag">asked ${g.hits}× · tried ${g.tries}× · teach ${g.id}</div></li>`).join('')
     : (yours ? '' : '<li class="empty">No open gaps.</li>')) + yours;
-
-  const S = $('#stream');
-  S.innerHTML = s.thoughts.length
-    ? s.thoughts.slice(0, 12).map(t => `<li>${t.text.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</li>`).join('')
-    : (s.thinking
-        ? '<li class="empty">Warming up. The first thought takes a few seconds.</li>'
-        : '<li class="empty">Idle. Restart with <code>brain dash --think</code> to watch her think.</li>');
-
-  $('#tbody').innerHTML = s.nodes.map(n => `<tr><td class="n">${n.id}</td><td>${n.kind}</td>
-    <td>${n.text.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])).slice(0, 150)}</td>
-    <td class="n">${n.uses}</td><td class="n">${n.confidence.toFixed(2)}</td></tr>`).join('');
-
-  const C = $('#chat');
-  if (!sending && JSON.stringify(s.chat) !== lastChat) {
-    lastChat = JSON.stringify(s.chat);
-    C.innerHTML = s.chat.length ? s.chat.map(m => {
-      const mine = m.role === 'user';
-      let meta = '';
-      if (!mine) {
-        if (m.gap) meta = '<div class="meta gapnote">logged as a gap — teach her</div>';
-        else if (m.learned && m.learned.length)
-          meta = m.learned.map(l => `<div class="meta learned">remembered (${l.importance}/10): ${esc(l.text)}</div>`).join('');
-        if (m.changed && m.changed.length)
-          meta += m.changed.map(c => `<div class="meta learned">changed her mind. was: ${esc(c.was)}</div>`).join('');
-        else if (m.intent === 'refused') meta = '<div class="meta gapnote">refused — touched her core values</div>';
-      }
-      return `<div class="msg ${mine ? 'me' : ''}">
-        <div class="who">${mine ? 'you' : s.core.name}</div>
-        <div class="bub">${esc(m.text)}</div>${meta}</div>`;
-    }).join('') : '<p class="empty">Say something. She remembers it.</p>';
-    C.scrollTop = C.scrollHeight;
-  }
-
-  sync(s);
+  if (!thoughts.length) renderThoughts(s.thinking);
 }
 
-$('#b-graph').onclick = () => {
-  $('#b-graph').ariaPressed = 'true'; $('#b-table').ariaPressed = 'false';
-  cv.classList.remove('hidden'); $('#tablewrap').classList.add('hidden'); box = fit();
-};
-$('#b-table').onclick = () => {
-  $('#b-graph').ariaPressed = 'false'; $('#b-table').ariaPressed = 'true';
-  cv.classList.add('hidden'); $('#tablewrap').classList.remove('hidden');
-};
+let thoughts = [];
+function renderThoughts(thinking = true) {
+  $('#stream').innerHTML = thoughts.length
+    ? thoughts.slice(0, 12).map(t => `<li>${esc(t.text)}</li>`).join('')
+    : (thinking ? '<li class="empty">Quiet. She thinks when nobody has spoken for a minute.</li>'
+                : '<li class="empty">Idle. Restart with <code>brain dash --think</code> to watch her think.</li>');
+}
 
-$('#say').onsubmit = async e => {
+// ---------- chat: words stream in as she writes them
+const chat = $('#chat');
+let streaming = null;
+
+function metaFor(m) {
+  if (m.role === 'user') return '';
+  if (m.intent === 'refused') return '<div class="meta gapnote">refused — touched her core values</div>';
+  let out = '';
+  if (m.gap) out += '<div class="meta gapnote">logged as a gap — teach her</div>';
+  if (m.general) out += '<div class="meta">general knowledge, not taught</div>';
+  for (const l of m.learned || []) out += `<div class="meta learned">remembered (${l.importance}/10): ${esc(l.text)}</div>`;
+  for (const c of m.changed || []) out += `<div class="meta learned">changed her mind. was: ${esc(c.was)}</div>`;
+  return out;
+}
+
+function upsert(m) {
+  if (chat.querySelector('.empty')) chat.innerHTML = '';
+  let el = document.getElementById('m-' + m.id);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'm-' + m.id; el.className = 'msg' + (m.role === 'user' ? ' me' : '');
+    el.innerHTML = `<div class="who">${m.role === 'user' ? 'you' : esc(core.name)}</div><div class="bub"></div><div class="metas"></div>`;
+    chat.appendChild(el);
+  }
+  if (m.text !== undefined) el.querySelector('.bub').textContent = m.text;
+  el.querySelector('.metas').innerHTML = metaFor(m);
+  chat.scrollTop = chat.scrollHeight;
+  return el;
+}
+
+function busy(on) { $('#send').disabled = on; $('#msg').placeholder = on ? 'She is answering…' : 'Ask her something, or teach her a fact'; }
+
+// ---------- one socket for everything
+let sock = null, retry = 500;
+function connect() {
+  sock = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  sock.onopen = () => { retry = 500; $('#mode').textContent = 'connected'; };
+  sock.onclose = () => {
+    $('#mode').textContent = 'reconnecting…'; $('#pulse').className = 'pulse off';
+    setTimeout(connect, retry = Math.min(retry * 2, 8000));
+  };
+  sock.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'graph') setGraph(m);
+    else if (m.type === 'state') setState(m);
+    else if (m.type === 'history') {
+      chat.innerHTML = m.chat.length ? '' : '<p class="empty">Say something. She remembers it.</p>';
+      m.chat.forEach(upsert); thoughts = m.thoughts; renderThoughts();
+    } else if (m.type === 'thought') { thoughts.unshift(m); renderThoughts(); }
+    else if (m.type === 'start') {
+      streaming = m.id; busy(true);
+      upsert({ id: m.id, role: 'assistant' }).querySelector('.bub').innerHTML = '<span class="dots"></span>';
+    } else if (m.type === 'waiting') {
+      const el = document.getElementById('m-' + m.id);
+      if (el) el.querySelector('.metas').innerHTML = '<div class="meta">finishing a thought first…</div>';
+    } else if (m.type === 'token') {
+      const el = document.getElementById('m-' + m.id); if (!el) return;
+      const bub = el.querySelector('.bub');
+      if (bub.querySelector('.dots')) { bub.textContent = ''; el.querySelector('.metas').innerHTML = ''; }
+      bub.textContent += m.text; chat.scrollTop = chat.scrollHeight;
+    } else if (m.type === 'chat') {
+      upsert(m);
+      if (m.role === 'assistant' && m.id === streaming) { streaming = null; busy(false); $('#msg').focus(); }
+    }
+  };
+}
+connect();
+
+$('#say').onsubmit = e => {
   e.preventDefault();
   const box = $('#msg'), text = box.value.trim();
-  if (!text || sending) return;
-  sending = true; box.value = ''; $('#send').disabled = true;
-  const C = $('#chat');
-  if (C.querySelector('.empty')) C.innerHTML = '';
-  C.insertAdjacentHTML('beforeend',
-    `<div class="msg me"><div class="who">you</div><div class="bub">${esc(text)}</div></div>
-     <div class="msg" id="pending"><div class="who">${state ? state.core.name : '…'}</div>
-     <div class="bub"><span class="dots"></span></div></div>`);
-  C.scrollTop = C.scrollHeight;
-  let failed = null;
-  try {
-    const r = await fetch('/api/say', { method: 'POST', body: JSON.stringify({ text }) });
-    if (!r.ok) failed = r.status === 501
-      ? 'This dashboard is running older code and cannot chat. Restart it: brain dash --think'
-      : `She did not answer (HTTP ${r.status}).`;
-  } catch (err) {
-    failed = 'Could not reach her: ' + err;
-  }
-  sending = false; $('#send').disabled = false; box.focus();
-  if (failed) {
-    const pend = $('#pending');
-    if (pend) { pend.querySelector('.bub').innerHTML = esc(failed);
-                pend.querySelector('.bub').style.color = 'var(--bad)';
-                pend.removeAttribute('id'); }
-  } else lastChat = '';
+  if (!text || streaming || !sock || sock.readyState !== 1) return;
+  sock.send(JSON.stringify({ type: 'say', text }));
+  box.value = '';
 };
 
-async function poll() {
-  try { render(await (await fetch('/api/state')).json()); } catch (e) {}
-  setTimeout(poll, 2000);
-}
-poll(); loop();
+// ---------- table, fetched only when opened
+$('#b-graph').onclick = () => {
+  $('#b-graph').ariaPressed = 'true'; $('#b-table').ariaPressed = 'false';
+  cv.classList.remove('hidden'); $('#tablewrap').classList.add('hidden'); draw();
+};
+$('#b-table').onclick = async () => {
+  $('#b-graph').ariaPressed = 'false'; $('#b-table').ariaPressed = 'true';
+  cv.classList.add('hidden'); $('#tablewrap').classList.remove('hidden');
+  const rows = await (await fetch('/api/table')).json();
+  $('#tbody').innerHTML = rows.map(([id, kind, text, uses, conf, dead]) =>
+    `<tr style="${dead ? 'opacity:.45' : ''}"><td class="n">${id}</td><td>${kind}</td><td>${esc(text)}</td>
+     <td class="n">${uses}</td><td class="n">${conf.toFixed(2)}</td></tr>`).join('');
+};
 </script>
 </body>
 </html>

@@ -13,6 +13,15 @@ STATEMENT_RULE = (
     "relates to it, connect the two in a few words. You are being told this, so never "
     "say you don't know it and never ask to be taught it."
 )
+GENERAL_RULE = (
+    "Here is what you were taught about this subject, so you know exactly which thing "
+    "the question means:\n{memories}\n\nNothing you were taught answers the question. "
+    "You may answer from your general knowledge of the world, but only about this exact "
+    "thing. If this thing is not something you know from the wider world, for example a "
+    "private, local or made-up thing that merely shares a name with something famous, "
+    "reply with exactly \"{idk}\" and nothing else. Never guess. "
+    "Answer in one or two short sentences."
+)
 THINK_RULE = (
     "Before you answer, think inside <think> and </think>: name the memories that "
     "matter and chain them one step at a time until you reach the answer, or until "
@@ -73,16 +82,50 @@ def _unthink(text):
     return shown
 
 
-def reply(db, question, k=5, history=None):
+class Speaker:
+    """Streams what she says out loud and nothing else. Private <think> text never
+    reaches the screen, and a reply that opens with 'I don't know' is held back, because
+    the general-knowledge tier may still replace it."""
+
+    def __init__(self, emit):
+        self.emit, self.full, self.sent = emit, "", 0
+
+    def visible(self):
+        text = re.sub(r"<think>.*?</think>", "", self.full, flags=re.S)
+        text = text.split("<think>")[0]
+        tail = re.search(r"<[a-z/]*$", text)  # a tag still being written
+        return (text[: tail.start()] if tail else text).lstrip()
+
+    def feed(self, chunk):
+        self.full += chunk
+        shown = self.visible()
+        low = shown.lower()
+        if IDK.lower().startswith(low) or low.startswith(IDK.lower()):
+            return
+        if len(shown) > self.sent:
+            self.emit(shown[self.sent:])
+            self.sent = len(shown)
+
+
+def _speak(messages, temperature, on_token):
+    if not on_token:
+        return ollama.chat(messages, temperature=temperature)
+    speaker = Speaker(on_token)
+    for chunk in ollama.stream(messages, temperature=temperature):
+        speaker.feed(chunk)
+    return speaker.full
+
+
+def reply(db, question, k=5, history=None, on_token=None):
     """The fast half: everything that must happen before she can speak."""
     core = identity.load_core()
     user = core["serves"]
     me = identity.describe(db, with_inventory=True)
+    plain = decide.standalone(question, history, user)
     pre = _parallel(
         route=lambda: decide.route(question),
         guard=lambda: decide.guard(question, system=me),
-        hits=lambda: memory.recall(
-            db, decide.standalone(question, history, user), k=k, touch=False),
+        hits=lambda: memory.recall(db, plain, k=k, touch=False),
     )
     call, hits = pre["route"], pre["hits"]
     call["touches_core"] = pre["guard"]
@@ -108,25 +151,64 @@ def reply(db, question, k=5, history=None):
         rule = (STATEMENT_RULE if call["telling"]
                 else RECALL_RULE.format(user=user, idk=IDK) + "\n\n" + THINK_RULE)
         label = f"{user} says" if call["telling"] else "Question"
-        text = ollama.chat(
+        text = _speak(
             [{"role": "system", "content": me + "\n\n" + rule}]
             + list(history or [])
             + [{"role": "user",
                 "content": f"Memories:\n{_context(hits)}\n\n{label}: {asked}"}],
-            temperature=0.3,
+            0.3, on_token,
         )
         text = _unthink(text)
     else:
         hits = []
-        text = ollama.chat(
+        text = _speak(
             [{"role": "system", "content": me}]
             + list(history or [])
-            + [{"role": "user", "content": question}]
+            + [{"role": "user", "content": question}],
+            0.7, on_token,
         )
+
+    call["source"] = "memory" if hits and _supported(text, question, hits) else "self"
+    if call["source"] == "self" and hits and not call["telling"] and IDK.lower() not in text.lower():
+        # She answered past her memories: the words are not in them. Say so.
+        call["source"] = "general"
+    if IDK.lower() in text.lower() and not call["telling"]:
+        general = _general(plain, pre["hits"], user, core["name"], on_token)
+        if general:
+            text, call["source"] = general, "general"
 
     # A statement is never a gap: being told something is how she learns it.
     call["gap"] = IDK.lower() in text.lower() and not call["telling"]
     return text, hits, call
+
+
+def _supported(text, question, hits, enough=0.5):
+    """Do the answer's own words come from the memories she was shown? Words already in
+    the question don't count. A cheap, model-free test of where an answer came from."""
+    said = memory._words(text) - memory._words(question)
+    if not said:
+        return True
+    seen = set().union(*(memory._words(r["text"]) for _, r in hits))
+    return len(said & seen) / len(said) >= enough
+
+
+def _general(question, hits, user, name, on_token=None):
+    """Second tier: what the model already knows. Never about people, never when it
+    turns out to mean a different thing than her memories do. Memory still wins: a
+    correction from the user is stored and answered from memory next time."""
+    if decide.mentions_people(question, user, name):
+        return None
+    # Her memories go in as context so "the Meridian Line" means her railway, not the
+    # Greenwich meridian the model would otherwise reach for.
+    taught = "\n".join(f"- {r['text'][:200]}" for _, r in hits if not r["invalid_at"]) or "- nothing"
+    text = _speak(
+        [{"role": "system", "content": GENERAL_RULE.format(memories=taught, idk=IDK)},
+         {"role": "user", "content": question}],
+        0.3, on_token,
+    ).strip()
+    if not text or IDK.lower() in text.lower():
+        return None
+    return text
 
 
 def settle(db, question, text, call, history=None):
@@ -135,7 +217,9 @@ def settle(db, question, text, call, history=None):
     started = time.time()
     user = identity.load_core()["serves"]
     kept = []
-    if call["gap"]:
+    if call.get("source") == "general":
+        pass  # unverified: she says it, she does not file it as taught
+    elif call["gap"]:
         store.note_gap(db, question)
     elif call["telling"]:
         kept = reflect.write_back(db, question, text, floor=1)
@@ -177,6 +261,8 @@ def _print(call, kept):
     flag = "" if call["ok"] else "  [judge offline]"
     label = "refused" if call["touches_core"] else call["intent"]
     print(f"  ({label}, memory={call['needs_memory']}){flag}")
+    if call.get("source") == "general":
+        print("  (general knowledge, not taught)")
     if call.get("resolved"):
         print(f"  (read as: {call['resolved']})")
     if call.get("gap"):
